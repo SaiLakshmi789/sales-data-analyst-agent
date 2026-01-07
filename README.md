@@ -1,5 +1,8 @@
 # 🛒 Sales Data Analyst Agent
 
+🚀 **Live Demo:** 
+https://sales-data-analyst-agent.streamlit.app/*(You can explore this app even without local setup if you click on this link, make sure to upload the dataset from the link i mentioned in the end)*
+
 An **agent-based, LLM-free sales analytics system** built using **Python, Pandas, and Streamlit** to automate data cleaning, KPI computation, visualization, and executive reporting.
 
 ---
