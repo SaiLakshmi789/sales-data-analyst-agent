@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+venv/
+.env
+.python-version
+uv.lock
+
+# IDEs
+.idea/
+.vscode/
+
+# Data / local artifacts
+outputs/
+*.xlsx
+*.xls
+*.csv
+context/
+.chroma_context/
+
+# Streamlit
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ignore experimental / non-core entrypoints
+copilot_cli.py
+main.py
+pyproject.toml
