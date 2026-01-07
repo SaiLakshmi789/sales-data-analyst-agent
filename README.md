@@ -57,3 +57,9 @@ Upload the Online Retail dataset (.csv or .xlsx) when prompted.
 Dataset is not included in this repository.
 Download from Kaggle:
 https://www.kaggle.com/datasets/ulrikthygepedersen/online-retail-dataset
+
+## 🔮 Next Steps
+
+- Add optional LLM-powered insight agent for KPI explanations
+- Enable natural-language querying over sales data
+- Integrate external APIs while preserving deterministic core logic
