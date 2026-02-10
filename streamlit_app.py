@@ -1,145 +1,155 @@
-import tempfile
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import os
 
+# Your existing sales pipeline
 from src.orchestrator import run_pipeline
 
+# New social pipeline
+from src.social_orchestrator import run_social_pipeline
+from src.social_agents.approvals import ApprovalsStore
+from src.social_agents.executor import DryRunExecutor
 
 def make_arrow_compatible(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Streamlit uses Arrow to render dataframes. Arrow fails on object columns with mixed
-    types (e.g., StockCode having both ints and strings).
-    Convert object columns to string to avoid ArrowTypeError.
-    """
-    df = df.copy()
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = df[col].astype(str)
-    return df
+    # Streamlit Arrow compatibility helper
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_period_dtype(out[c]):
+            out[c] = out[c].astype(str)
+    return out
 
+st.set_page_config(page_title="Agentic Analytics Copilot", layout="wide")
 
-st.set_page_config(page_title="Sales Data Analyst Agent", layout="wide")
+st.title("📊 Agentic Analytics Copilot")
+st.caption("Sales Analytics Agent + Instagram Agentic Analyst (with approvals + dry-run executor)")
 
-st.title("🛒 Sales Data Analyst Agent")
-st.caption(
-    "Upload the Online Retail dataset, run the agent pipeline, and get KPIs, charts, and an executive summary."
-)
+mode = st.sidebar.radio("Mode", ["Sales (Retail)", "Instagram Analytics"])
 
-# Sidebar controls
-st.sidebar.header("Run Settings")
-show_top_n = st.sidebar.slider("Show top products (table)", min_value=10, max_value=200, value=50, step=10)
+uploaded_file = st.sidebar.file_uploader("Upload dataset", type=["csv", "xlsx"])
 
-uploaded = st.file_uploader("Upload the Online Retail dataset", type=["csv", "xlsx", "xls"])
+show_top_n = st.sidebar.slider("Top N rows to display", 10, 200, 50)
 
-if uploaded is None:
-    st.info("Upload a dataset to begin.")
+if uploaded_file is None:
+    st.info("Upload a dataset from the sidebar to begin.")
     st.stop()
 
-# Save uploaded file to a temp path (so pandas can read it)
-with tempfile.TemporaryDirectory() as tmpdir:
-    tmp_path = Path(tmpdir) / uploaded.name
-    tmp_path.write_bytes(uploaded.getbuffer())
+# Save uploaded file locally
+os.makedirs("data", exist_ok=True)
+tmp_path = os.path.join("data", uploaded_file.name)
+with open(tmp_path, "wb") as f:
+    f.write(uploaded_file.getbuffer())
 
-    st.success(f"Uploaded: {uploaded.name}")
+if st.sidebar.button("Run Pipeline"):
+    if mode == "Sales (Retail)":
+        results = run_pipeline(dataset_path=str(tmp_path))
+    else:
+        results = run_social_pipeline(dataset_path=str(tmp_path))
+    st.session_state["results"] = results
 
-    with st.expander("Preview raw data"):
-        path = Path(tmp_path)
-        suffix = path.suffix.lower()
+results = st.session_state.get("results")
+if not results:
+    st.stop()
 
-        if suffix == ".csv":
-            raw_preview = pd.read_csv(path, encoding="ISO-8859-1")
-        elif suffix in [".xlsx", ".xls"]:
-            raw_preview = pd.read_excel(path)
-        else:
-            st.error(f"Unsupported file type: {suffix}")
-            st.stop()
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Recommendations", "Approval Queue"])
 
-        st.dataframe(make_arrow_compatible(raw_preview.head(20)), width="stretch")
+with tab1:
+    st.subheader("Dashboard")
 
-    if st.button("🚀 Run Agent Pipeline", type="primary"):
-        with st.spinner("Running agents: ingestion → quality → eda → kpis → viz → report ..."):
-            results = run_pipeline(dataset_path=str(tmp_path))
+    if mode == "Sales (Retail)":
+        st.write("Sales KPIs")
+        st.json(results.get("kpis", {}))
 
-        st.success("Pipeline completed! Outputs are saved under /outputs and also shown below.")
+        if "monthly_df" in results:
+            st.subheader("Monthly KPIs")
+            st.dataframe(make_arrow_compatible(results["monthly_df"]), use_container_width=True)
 
-        # --- KPI Cards ---
+        if "product_df" in results:
+            st.subheader("Top Products")
+            st.dataframe(make_arrow_compatible(results["product_df"].head(show_top_n)), use_container_width=True)
+
+    else:
         k = results["kpis"]
-        dq = results["dq"]
-        eda = results["eda"]
-
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Net Revenue", f"{k['net_revenue']:.2f}")
-        c2.metric("Orders", f"{k['orders']}")
-        c3.metric("AOV", f"{k['aov']:.2f}")
-        c4.metric("Repeat Rate", f"{k['repeat_customer_rate'] * 100:.1f}%")
+        c1.metric("Total Posts", f"{k['total_posts']}")
+        c2.metric("Total Engagements", f"{int(k['total_engagements'])}")
+        c3.metric("Weighted ER", f"{k['weighted_engagement_rate']:.4f}")
+        c4.metric("Followers Gained", f"{int(k['total_followers_gained'])}")
 
         c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Gross Revenue", f"{k['gross_revenue']:.2f}")
-        c6.metric("Return Revenue", f"{k['return_revenue']:.2f}")
-        c7.metric("Active Customers", f"{k['active_customers']}")
-        c8.metric("Revenue / Customer", f"{k['revenue_per_customer']:.2f}")
+        c5.metric("Impressions", f"{int(k['total_impressions'])}")
+        c6.metric("Reach", f"{int(k['total_reach'])}")
+        c7.metric("Avg Eng/Post", f"{k['avg_engagements_per_post']:.2f}")
+        c8.metric("Avg ER", f"{k['avg_engagement_rate']:.4f}")
 
-        # --- Data Quality & EDA ---
-        with st.expander("🧪 Data Quality Report"):
-            st.json(dq)
+        st.subheader("Monthly Trend")
+        st.dataframe(make_arrow_compatible(results["monthly_df"]), use_container_width=True)
 
-        with st.expander("🔎 EDA Summary"):
-            st.json(eda)
+        st.subheader("Top Posts")
+        st.dataframe(make_arrow_compatible(results["top_posts_df"].head(show_top_n)), use_container_width=True)
 
-        # --- Tables ---
-        st.subheader("📈 Monthly KPIs")
-        st.dataframe(make_arrow_compatible(results["monthly_df"]), width="stretch")
+        st.subheader("Breakdowns")
+        colA, colB = st.columns(2)
+        with colA:
+            st.write("By Media Type")
+            st.dataframe(make_arrow_compatible(results["by_media_df"]), use_container_width=True)
+        with colB:
+            st.write("By Content Category")
+            st.dataframe(make_arrow_compatible(results["by_category_df"]), use_container_width=True)
 
-        st.subheader("🏷️ Top Products")
-        st.dataframe(make_arrow_compatible(results["product_df"].head(show_top_n)), width="stretch")
+with tab2:
+    st.subheader("Recommendations")
+    recs = results.get("recommendations", [])
+    if not recs:
+        st.info("No recommendations generated.")
+    else:
+        for r in recs:
+            with st.container(border=True):
+                st.markdown(f"**{r.get('title','(no title)')}**")
+                st.write(r.get("why",""))
+                st.caption(f"Kind: {r.get('kind')} | Risk: {r.get('risk_level')} | Confidence: {r.get('confidence')}")
+                if r.get("expected_impact"):
+                    st.json(r["expected_impact"])
+                if r.get("evidence"):
+                    st.json(r["evidence"])
 
-        # --- Charts (from saved PNGs) ---
-        st.subheader("📊 Charts")
-        charts = results["artifacts"]["charts"]
-        chart_cols = st.columns(3)
+with tab3:
+    st.subheader("Approval Queue (Human-in-the-loop)")
 
-        for idx, (name, chart_path) in enumerate(charts.items()):
-            p = Path(chart_path)
-            if p.exists():
-                with chart_cols[idx % 3]:
-                    st.image(str(p), caption=name.replace("_", " ").title(), use_container_width=True)
-            else:
-                with chart_cols[idx % 3]:
-                    st.warning(f"Missing chart: {name}")
+    if mode != "Instagram Analytics":
+        st.info("Approval queue is enabled for Instagram mode in this implementation.")
+        st.stop()
 
-        # --- Executive Summary ---
-        st.subheader("📝 Executive Summary")
-        exec_path = Path(results["artifacts"]["exec_summary"])
-        if exec_path.exists():
-            md_text = exec_path.read_text(encoding="utf-8")
-            st.markdown(md_text)
+    approvals_db = results.get("approvals_db", "db/approvals.db")
+    store = ApprovalsStore(db_path=approvals_db, schema_path="schemas/approvals_sqlite.sql")
+    store.init_db()
 
-            st.download_button(
-                "⬇️ Download Executive Summary (MD)",
-                data=md_text,
-                file_name="executive_summary.md",
-                mime="text/markdown",
-            )
-        else:
-            st.error("Executive summary file not found.")
+    pending = store.list_pending()
+    if not pending:
+        st.info("No pending approvals.")
+    else:
+        for req in pending:
+            with st.container(border=True):
+                st.markdown(f"**{req['action_type']}** • `{req['id']}`")
+                st.write(f"Risk: {req['risk_level']} — {req.get('risk_reason','')}")
+                st.caption(f"Account: {req['account_id']} | Priority: {req['priority']}")
 
-        # --- Download key artifacts ---
-        st.subheader("📦 Download Output Files")
-        artifact_files = {
-            "KPI Summary (JSON)": results["artifacts"]["kpi_summary"],
-            "Data Quality Report (JSON)": results["artifacts"]["dq_report"],
-            "EDA Report (JSON)": results["artifacts"]["eda_report"],
-            "Monthly KPIs (CSV)": results["artifacts"]["monthly_csv"],
-            "Top Products (CSV)": results["artifacts"]["product_csv"],
-        }
+                st.write("Draft payload:")
+                st.json(req["draft_payload"])
 
-        for label, fpath in artifact_files.items():
-            p = Path(fpath)
-            if p.exists():
-                st.download_button(
-                    f"⬇️ {label}",
-                    data=p.read_bytes(),
-                    file_name=p.name,
-                )
+                col1, col2 = st.columns(2)
+                if col1.button("Approve", key=f"approve_{req['id']}"):
+                    store.approve(req["id"])
+                    st.success("Approved.")
+                    st.rerun()
+
+                if col2.button("Reject", key=f"reject_{req['id']}"):
+                    store.reject(req["id"])
+                    st.warning("Rejected.")
+                    st.rerun()
+
+    st.divider()
+    if st.button("Execute Approved (Dry-run)"):
+        executor = DryRunExecutor(db_path=approvals_db)
+        n = executor.execute_approved()
+        st.success(f"Executed {n} approved actions (dry-run).")
+        st.rerun()
